@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>農園パズル 10x10</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body {
+            background: linear-gradient(to bottom, #7dd3fc 0%, #a3e635 100%);
+            color: #3f6212;
+            font-family: 'Arial Black', sans-serif;
+            touch-action: none;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100dvh;
+            margin: 0;
+            position: relative;
+        }
+
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            grid-template-rows: repeat(10, 1fr);
+            gap: 2px;
+            background: #5d4037; /* dark dirt */
+            padding: 4px;
+            border: 6px solid #8d6e63; /* wood frame */
+            border-radius: 12px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4), inset 0 0 10px rgba(0,0,0,0.6);
+            width: 100%;
+            max-width: min(96vw, 55dvh, 500px);
+            aspect-ratio: 1 / 1;
+            margin: auto;
+            z-index: 10;
+        }
+
+        .cell {
+            background: #795548; /* lighter dirt patch */
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.6);
+            border-radius: 4px;
+            transition: all 0.2s;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: min(7vw, 3dvh, 26px); /* Responsive emoji */
+            line-height: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .filled {
+            box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+            animation: plantCrop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            background-color: #fcd34d !important; /* harvest ready highlighted soil */
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+
+        .ghost {
+            opacity: 0.5;
+            transform: scale(0.9);
+            box-shadow: 0 0 10px white;
+            background: rgba(255, 255, 255, 0.4) !important;
+        }
+
+        .clearing {
+            animation: clearAnim 0.5s forwards;
+            z-index: 20;
+        }
+
+        @keyframes plantCrop {
+            0% { transform: scale(0) translateY(-20px); opacity: 0; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+
+        @keyframes clearAnim {
+            0% { transform: scale(1); opacity: 1; filter: saturate(1); }
+            30% { transform: scale(1.4); opacity: 1; filter: saturate(1.5) drop-shadow(0 0 10px gold); }
+            100% { transform: scale(0) translateY(-30px) rotate(45deg); opacity: 0; filter: saturate(2) drop-shadow(0 0 0 transparent); }
+        }
+
+        .shape-container {
+            display: flex;
+            justify-content: space-evenly;
+            align-items: center;
+            height: clamp(100px, 15dvh, 150px);
+            width: 100%;
+            max-width: 500px;
+            margin: auto;
+        }
+
+        .shape-slot {
+            width: 100px;
+            height: 100px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .shape-block {
+            position: relative;
+            cursor: pointer;
+            touch-action: none;
+            transform-origin: center;
+            transition: transform 0.2s;
+        }
+
+        .shape-block.dragging {
+            opacity: 0.3 !important;
+        }
+
+        .mini-cell {
+            position: absolute;
+            background-color: #fcd34d;
+            border: 1px solid rgba(0,0,0,0.2);
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: var(--icon-size, 16px);
+        }
+
+        #drag-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* Modals */
+        .modal {
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+
+        .glass-panel {
+            background: rgba(255, 248, 220, 0.95); /* wooden paper feel */
+            border: 4px solid #8b5a2b; /* wood brown */
+            border-radius: 1.5rem !important;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3), inset 0 0 15px rgba(139,90,43,0.3);
+            z-index: 10;
+        }
+
+        .combo-text {
+            animation: comboPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-shadow: 0 0 10px currentColor;
+        }
+
+        @keyframes comboPop {
+            0% { transform: scale(0.5) translateY(20px); opacity: 0; }
+            50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+
+        /* Confetti */
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00;
+            animation: fall 3s linear forwards;
+            z-index: 50;
+            pointer-events: none;
+        }
+        @keyframes fall {
+            to { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Background Scenery -->
+    <div class="absolute top-4 left-6 text-7xl drop-shadow-lg z-0 animate-pulse" style="animation-duration: 4s;">☀️</div>
+    <div class="absolute top-12 right-10 text-6xl opacity-80 z-0 drop-shadow-md">☁️</div>
+    <div class="absolute top-32 left-2 text-5xl opacity-70 z-0 drop-shadow-md">☁️</div>
+    
+    <div class="absolute bottom-0 w-full h-[30vh] bg-gradient-to-b from-green-500 to-green-700 z-0 border-t-8 border-green-600 shadow-[inset_0_10px_20px_rgba(0,0,0,0.2)]"></div>
+    <div class="absolute bottom-[28vh] w-full flex justify-between px-2 text-4xl z-0 drop-shadow-xl" style="font-size: clamp(2rem, 8vw, 3rem);">
+        <span>🌳</span><span>🌻</span><span>🏠</span><span>🚜</span><span>🐄</span><span>🌳</span>
+    </div>
+
+    <!-- Header area -->
+    <div class="w-full flex justify-between items-center p-4 z-10 glass-panel mt-2 mb-2 max-w-lg mx-auto !rounded-2xl">
+        <div class="flex flex-col">
+            <span class="text-xs text-lime-700 font-bold uppercase tracking-wider">スコア</span>
+            <span id="score-display" class="text-3xl font-black text-lime-900 drop-shadow-sm">0</span>
+        </div>
+        <div id="combo-container" class="flex flex-col items-center opacity-0 transition-opacity duration-300">
+            <span class="text-[10px] text-orange-300 font-bold uppercase tracking-widest bg-orange-900/50 px-2 py-1 rounded-full border border-orange-500/30">大収穫コンボ！</span>
+            <span id="combo-display" class="text-2xl font-black italic text-orange-400 combo-text">x1</span>
+        </div>
+        <button onclick="showLeaderboard()" class="w-10 h-10 bg-yellow-400 rounded-full flex items-center justify-center border-2 border-yellow-600 shadow-lg active:scale-95 transition-transform">
+            🏆
+        </button>
+    </div>
+
+    <!-- Main Board -->
+    <div class="flex-1 flex flex-col items-center justify-center relative w-full mb-2 min-h-0">
+        <div id="board" class="board-grid relative">
+            <!-- 100 cells will be rendered here -->
+        </div>
+        
+        <!-- Floating indicator for points -->
+        <div id="floating-score" class="absolute pointer-events-none text-4xl font-black text-green-400 drop-shadow-[0_0_10px_rgba(74,222,128,0.8)] opacity-0 transition-all duration-500 z-50">
+        </div>
+    </div>
+
+    <!-- Shape Generation Area -->
+    <div class="glass-panel pb-4 pt-2 z-10 max-w-lg mx-auto w-full shrink-0 mb-4">
+        <div id="shape-area" class="shape-container">
+            <div class="shape-slot" id="slot-0"></div>
+            <div class="shape-slot" id="slot-1"></div>
+            <div class="shape-slot" id="slot-2"></div>
+        </div>
+    </div>
+
+    <!-- Drag Layer -->
+    <div id="drag-layer"></div>
+
+    <!-- Start / Game Over Modal -->
+    <div id="overlay-modal" class="fixed inset-0 modal flex items-center justify-center z-[9000] p-4">
+        <div class="glass-panel p-8 rounded-[2rem] w-full max-w-sm text-center flex flex-col items-center border-[6px] border-lime-500">
+            <h1 class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-br from-lime-600 to-green-800 uppercase italic mb-2 drop-shadow-sm">農園パズル</h1>
+            <p class="text-lime-700 text-sm font-bold mb-8 uppercase tracking-widest">10x10 ハーベスト</p>
+            
+            <div id="game-over-stats" class="hidden w-full mb-6 flex flex-col items-center p-4 bg-white/50 rounded-2xl border border-lime-200">
+                <span class="text-red-500 font-black text-2xl uppercase mb-1">ゲームオーバー</span>
+                <span class="text-xs text-lime-800 uppercase">最終スコア</span>
+                <span id="final-score" class="text-5xl font-black text-yellow-400 mb-2">0</span>
+                
+                <input type="text" id="player-name" placeholder="名前を入力" class="mt-4 w-full bg-indigo-900/50 border-2 border-indigo-400 rounded-xl p-3 text-center text-white font-black uppercase tracking-wider outline-none focus:border-cyan-400 transition-colors" maxlength="10">
+                <button id="submit-score-btn" onclick="submitScore()" class="mt-2 w-full bg-gradient-to-r from-green-500 to-emerald-600 font-black text-white p-3 rounded-xl shadow-lg hover:brightness-110 active:scale-95 transition-all text-sm uppercase hidden">スコアを保存してランキングを見る</button>
+            </div>
+
+            <div class="w-full flex flex-col gap-3">
+                <button id="btn-continue" onclick="loadGame()" class="hidden w-full bg-gradient-to-b from-orange-400 to-orange-600 font-black text-white text-xl p-4 rounded-2xl shadow-[0_10px_20px_rgba(0,0,0,0.5),inset_0_2px_0_rgba(255,255,255,0.4)] border border-orange-300 uppercase tracking-widest active:translate-y-1 active:shadow-none transition-all">
+                    つづきから
+                </button>
+                <button onclick="startGame()" class="w-full bg-gradient-to-b from-green-500 to-lime-600 font-black text-white text-xl p-4 rounded-2xl shadow-[0_10px_20px_rgba(0,0,0,0.5),inset_0_2px_0_rgba(255,255,255,0.4)] border border-lime-400 uppercase tracking-widest active:translate-y-1 active:shadow-none transition-all">
+                    はじめから
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaderboard Modal -->
+    <div id="leaderboard-modal" class="fixed inset-0 modal hidden items-center justify-center z-[9500] p-4" onclick="closeLeaderboard(event)">
+        <div class="glass-panel p-6 rounded-[2rem] w-full max-w-sm border-[4px] border-yellow-500 relative flex flex-col max-h-[80vh]" onclick="event.stopPropagation()">
+            <button onclick="closeLeaderboard(true)" class="absolute top-4 right-4 w-8 h-8 bg-white/20 rounded-full flex items-center justify-center font-bold text-white hover:bg-white/40">✕</button>
+            <h2 class="text-3xl font-black text-yellow-400 uppercase italic text-center mb-6 drop-shadow-md">トップ 10 ランキング</h2>
+            
+            <div id="leaderboard-list" class="flex-1 overflow-y-auto space-y-2 pr-2 custom-scroll">
+                <!-- Data injected here -->
+                <div class="text-center text-white/50 text-sm font-bold py-10">読み込み中...</div>
+            </div>
+            
+            <button onclick="closeLeaderboard(true)" class="mt-6 w-full bg-white/10 border border-white/20 p-3 rounded-xl font-black uppercase text-xl text-white hover:bg-white/20 active:scale-95 transition-all">閉じる</button>
+        </div>
+    </div>
+
+
+<script>
+    // Firebase Setup
+    const firebaseConfig = {
+      apiKey: "AIzaSyArgpQmKuK3AvfX2ockdexj_sE2-atYD2c",
+      authDomain: "project-3523700627641851409.firebaseapp.com",
+      projectId: "project-3523700627641851409",
+      storageBucket: "project-3523700627641851409.firebasestorage.app",
+      messagingSenderId: "889969356402",
+      appId: "1:889969356402:web:01d4c1045fb6fef1b41ceb",
+      measurementId: "G-KJMM2LF30L"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const lbRef = db.ref('blockblast_scores');
+
+    // Game Constants
+    const BOARD_SIZE = 10;
+    const SHAPES = [
+        [{r:0,c:0}], // 1x1
+        [{r:0,c:0},{r:0,c:1}], [{r:0,c:0},{r:1,c:0}], // 2
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2}], [{r:0,c:0},{r:1,c:0},{r:2,c:0}], // 3
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:0,c:3}], [{r:0,c:0},{r:1,c:0},{r:2,c:0},{r:3,c:0}], // 4
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:0,c:3},{r:0,c:4}], [{r:0,c:0},{r:1,c:0},{r:2,c:0},{r:3,c:0},{r:4,c:0}], // 5
+        [{r:0,c:0},{r:0,c:1},{r:1,c:0},{r:1,c:1}], // 2x2
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:1,c:0},{r:1,c:1},{r:1,c:2},{r:2,c:0},{r:2,c:1},{r:2,c:2}], // 3x3
+        [{r:0,c:0},{r:1,c:0},{r:2,c:0},{r:2,c:1}], [{r:0,c:1},{r:1,c:1},{r:2,c:0},{r:2,c:1}], // L
+        [{r:0,c:0},{r:0,c:1},{r:1,c:0},{r:2,c:0}], [{r:0,c:0},{r:0,c:1},{r:1,c:1},{r:2,c:1}], // J
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:1,c:1}], [{r:0,c:1},{r:1,c:0},{r:1,c:1},{r:1,c:2}], // T
+        [{r:0,c:0},{r:1,c:0},{r:2,c:0},{r:1,c:1}], [{r:1,c:0},{r:0,c:1},{r:1,c:1},{r:2,c:1}], // T 90deg
+        [{r:0,c:0},{r:1,c:0},{r:2,c:0},{r:2,c:1},{r:2,c:2}], // Big L
+        [{r:2,c:0},{r:2,c:1},{r:2,c:2},{r:1,c:2},{r:0,c:2}], // Big J
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:1,c:0},{r:2,c:0}], // Big L flipped
+        [{r:0,c:0},{r:0,c:1},{r:0,c:2},{r:1,c:2},{r:2,c:2}]  // Big J flipped
+    ];
+    // Farm Crops Emoji Set
+    const COLORS = [
+        '🍅', '🌽', '🥕', '🍆', '🥦', '🍓', '🍇', '🍉', '🌻', '🍎'
+    ];
+
+    // Game State
+    let board = [];
+    let score = 0;
+    let comboMultiplier = 1;
+    let movesSinceLastClear = 0; // "within 3 moves" limit
+    let currentShapes = [];
+    
+    // DOM Elements
+    const boardEl = document.getElementById('board');
+    const scoreEl = document.getElementById('score-display');
+    const dragLayer = document.getElementById('drag-layer');
+    const comboCont = document.getElementById('combo-container');
+    const comboDisp = document.getElementById('combo-display');
+
+    // Drag State
+    let draggedData = null; // { shape, color, slotObj }
+    let dragClone = null;
+    let dragOffset = { x: 0, y: 0 };
+    let currentGhostCells = [];
+
+    // Local Storage Key
+    const SAVE_KEY = 'farmPuzzleSaveData';
+
+    function initBoard() {
+        boardEl.innerHTML = '';
+        board = [];
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            let row = [];
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                row.push(null);
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.id = `cell-${r}-${c}`;
+                boardEl.appendChild(cell);
+            }
+            board.push(row);
+        }
+    }
+
+    function generateShapes() {
+        currentShapes = [];
+        for (let i = 0; i < 3; i++) {
+            const slot = document.getElementById(`slot-${i}`);
+            slot.innerHTML = '';
+            const sIdx = Math.floor(Math.random() * SHAPES.length);
+            const cIdx = Math.floor(Math.random() * COLORS.length);
+            const shapeObj = { shape: SHAPES[sIdx], color: COLORS[cIdx], used: false, id: `slot-${i}` };
+            currentShapes.push(shapeObj);
+            renderShapeInSlot(shapeObj, slot);
+        }
+    }
+
+    function getShapeBounds(shape) {
+        let maxR = 0, maxC = 0;
+        shape.forEach(b => {
+            if (b.r > maxR) maxR = b.r;
+            if (b.c > maxC) maxC = b.c;
+        });
+        return { rows: maxR + 1, cols: maxC + 1 };
+    }
+
+    // Dynamic slot shaping so big ones shrink and fit inside 100x100
+    function renderShapeInSlot(shapeObj, slotEl) {
+        const bounds = getShapeBounds(shapeObj.shape);
+        // Base size maxed at 24px per cell for slot view
+        const maxSize = 24;
+        const totalW = bounds.cols * maxSize;
+        const totalH = bounds.rows * maxSize;
+        
+        // Scale down if too big
+        let scale = 1;
+        if (totalW > 90 || totalH > 90) {
+            scale = 90 / Math.max(totalW, totalH);
+        }
+
+        const blockEl = document.createElement('div');
+        blockEl.className = 'shape-block';
+        blockEl.style.width = `${totalW}px`;
+        blockEl.style.height = `${totalH}px`;
+        blockEl.style.transform = `scale(${scale})`;
+
+        shapeObj.shape.forEach(b => {
+            const cell = document.createElement('div');
+            cell.className = `mini-cell`; // we removed color bg class
+            cell.innerText = shapeObj.color; // use emoji
+            cell.style.width = `${maxSize}px`;
+            cell.style.height = `${maxSize}px`;
+            cell.style.left = `${b.c * maxSize}px`;
+            cell.style.top = `${b.r * maxSize}px`;
+            cell.style.setProperty('--icon-size', `${maxSize * 0.7}px`);
+            blockEl.appendChild(cell);
+        });
+
+        // Event listeners for drag
+        const startDrag = (e) => handleDragStart(e, shapeObj, blockEl, maxSize, scale);
+        
+        blockEl.addEventListener('touchstart', startDrag, {passive: false});
+        blockEl.addEventListener('mousedown', startDrag);
+
+        slotEl.appendChild(blockEl);
+        shapeObj.element = blockEl;
+    }
+
+    function handleDragStart(e, shapeObj, blockEl, baseSize, displayScale) {
+        if(e.type === 'touchstart') e.preventDefault();
+        
+        // Prevent multiple drag layers from rapid clicks
+        if (draggedData && draggedData.id === shapeObj.id) return;
+        if (dragClone) { dragClone.remove(); dragClone = null; }
+
+        const touch = e.type.includes('touch') ? e.touches[0] : e;
+        
+        draggedData = shapeObj;
+        blockEl.classList.add('dragging');
+
+        // Create Clone
+        dragClone = blockEl.cloneNode(true);
+        dragClone.classList.remove('dragging');
+        
+        // Match Board cell size for precise visual drop
+        const boardRect = boardEl.getBoundingClientRect();
+        // 10 cells, 9 gaps inside padding. Padding is 4px each side (8px). 9 gaps * 2px = 18px. Total non-cell width = 26px.
+        const bCellSize = (boardRect.width - 26) / 10; 
+        
+        const bounds = getShapeBounds(shapeObj.shape);
+        const cloneW = bounds.cols * bCellSize + ((bounds.cols - 1) * 2); 
+        const cloneH = bounds.rows * bCellSize + ((bounds.rows - 1) * 2);
+        
+        dragClone.style.width = `${cloneW}px`;
+        dragClone.style.height = `${cloneH}px`;
+        dragClone.style.transform = `scale(1.0)`; // Removed scaling so it matches true size
+        dragClone.style.position = `absolute`;
+        dragClone.style.pointerEvents = 'none';
+        // Add shadow for lift effect instead of scale
+        dragClone.style.filter = `drop-shadow(0px 10px 15px rgba(0,0,0,0.5))`;
+
+        // Adjust mini-cells inside clone
+        Array.from(dragClone.children).forEach((child, idx) => {
+            const b = shapeObj.shape[idx];
+            child.style.width = `${bCellSize}px`;
+            child.style.height = `${bCellSize}px`;
+            child.style.left = `${b.c * bCellSize + (b.c * 2)}px`; // + gaps
+            child.style.top = `${b.r * bCellSize + (b.r * 2)}px`;
+            child.style.border = '2px solid rgba(0,0,0,0.4)';
+            child.style.borderRadius = '4px';
+            child.style.boxShadow = 'inset 0 0 5px rgba(0,0,0,0.3)';
+            child.style.setProperty('--icon-size', `${bCellSize * 0.7}px`);
+        });
+
+        const rect = blockEl.getBoundingClientRect();
+        
+        // Match drag exactly at center of touch pointer
+        dragOffset.x = cloneW / 2;
+        dragOffset.y = cloneH / 2;
+        
+        dragLayer.appendChild(dragClone);
+        
+        moveClone(touch.clientX, touch.clientY);
+
+        document.addEventListener('touchmove', handleDragMove, {passive: false});
+        document.addEventListener('touchend', handleDragEnd);
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+    }
+
+    function moveClone(x, y) {
+        if (!dragClone) return;
+        dragClone.style.left = `${x - dragOffset.x}px`;
+        dragClone.style.top = `${y - dragOffset.y}px`;
+        
+        updateGhostCells(x, y);
+    }
+
+    function handleDragMove(e) {
+        if(e.type === 'touchmove') e.preventDefault();
+        const touch = e.type.includes('touch') ? e.touches[0] : e;
+        moveClone(touch.clientX, touch.clientY);
+    }
+
+    function getGridPos(clientX, clientY) {
+        const boardRect = boardEl.getBoundingClientRect();
+        // Determine clone top-left
+        const cloneX = clientX - dragOffset.x;
+        const cloneY = clientY - dragOffset.y;
+        
+        const cellW = (boardRect.width - 26) / 10 + 2; // cell + gap
+        
+        // Add half cell width/height tolerance for snapping
+        const c = Math.round((cloneX - boardRect.left) / cellW);
+        const r = Math.round((cloneY - boardRect.top) / cellW);
+        
+        return {r, c};
+    }
+
+    function updateGhostCells(clientX, clientY) {
+        clearGhosts();
+        if (!draggedData) return;
+        
+        const {r, c} = getGridPos(clientX, clientY);
+        const isValid = canPlace(draggedData.shape, r, c);
+        
+        if (isValid) {
+            draggedData.shape.forEach(b => {
+                const cellEl = document.getElementById(`cell-${r + b.r}-${c + b.c}`);
+                if (cellEl) {
+                    cellEl.className = `cell ghost`;
+                    currentGhostCells.push(cellEl);
+                }
+            });
+        }
+    }
+
+    function clearGhosts() {
+        currentGhostCells.forEach(el => {
+            el.className = 'cell'; // reset
+            // If we actually had a placed block beneath, it wouldn't be in ghost natively because canPlace fails
+        });
+        currentGhostCells = [];
+    }
+
+    function canPlace(shape, originR, originC) {
+        for (let b of shape) {
+            let tr = originR + b.r;
+            let tc = originC + b.c;
+            if (tr < 0 || tr >= BOARD_SIZE || tc < 0 || tc >= BOARD_SIZE) return false;
+            if (board[tr][tc] !== null) return false;
+        }
+        return true;
+    }
+
+    function handleDragEnd(e) {
+        document.removeEventListener('touchmove', handleDragMove);
+        document.removeEventListener('touchend', handleDragEnd);
+        document.removeEventListener('mousemove', handleDragMove);
+        document.removeEventListener('mouseup', handleDragEnd);
+
+        if (!draggedData) return;
+
+        const touch = e.type.includes('touch') ? e.changedTouches[0] : e;
+        const {r, c} = getGridPos(touch.clientX, touch.clientY);
+
+        clearGhosts();
+
+        if (canPlace(draggedData.shape, r, c)) {
+            placeBlock(draggedData, r, c);
+            const slot = document.getElementById(draggedData.id);
+            slot.innerHTML = '';
+            draggedData.used = true;
+            
+            checkLinesAndCombo();
+
+            if (currentShapes.every(s => s.used)) {
+                generateShapes();
+            }
+            
+            checkGameOver();
+        } else {
+            // Snap back visually
+            draggedData.element.classList.remove('dragging');
+        }
+
+        if (dragClone) {
+            dragClone.remove();
+            dragClone = null;
+        }
+        draggedData = null;
+
+        saveGameState();
+    }
+
+    function placeBlock(shapeObj, originR, originC) {
+        // Base score for placing: shape length * 10
+        addScore(shapeObj.shape.length * 10, false);
+        
+        shapeObj.shape.forEach(b => {
+            let tr = originR + b.r;
+            let tc = originC + b.c;
+            board[tr][tc] = shapeObj.color;
+            const cellEl = document.getElementById(`cell-${tr}-${tc}`);
+            cellEl.className = `cell filled`;
+            cellEl.innerText = shapeObj.color;
+        });
+    }
+
+    function checkLinesAndCombo() {
+        let linesToClear = { rows: new Set(), cols: new Set() };
+        
+        // Find full rows
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            if (board[r].every(c => c !== null)) {
+                linesToClear.rows.add(r);
+            }
+        }
+        
+        // Find full columns
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            let full = true;
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                if (board[r][c] === null) { full = false; break; }
+            }
+            if (full) linesToClear.cols.add(c);
+        }
+
+        const clearedCount = linesToClear.rows.size + linesToClear.cols.size;
+
+        if (clearedCount > 0) {
+            // Sounds or haptics could trigger here
+            if (navigator.vibrate) navigator.vibrate(50);
+            
+            // Display visual clears
+            linesToClear.rows.forEach(r => {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const el = document.getElementById(`cell-${r}-${c}`);
+                    el.classList.add('clearing');
+                }
+            });
+            linesToClear.cols.forEach(c => {
+                for (let r = 0; r < BOARD_SIZE; r++) {
+                    const el = document.getElementById(`cell-${r}-${c}`);
+                    el.classList.add('clearing');
+                }
+            });
+
+            // Delay actual DOM clear for animation
+            setTimeout(() => {
+                linesToClear.rows.forEach(r => {
+                    for (let c = 0; c < BOARD_SIZE; c++) {
+                        board[r][c] = null;
+                        let el = document.getElementById(`cell-${r}-${c}`);
+                        el.className = 'cell';
+                        el.innerText = '';
+                    }
+                });
+                linesToClear.cols.forEach(c => {
+                    for (let r = 0; r < BOARD_SIZE; r++) {
+                        board[r][c] = null;
+                        let el = document.getElementById(`cell-${r}-${c}`);
+                        el.className = 'cell';
+                        el.innerText = '';
+                    }
+                });
+            }, 400);
+
+            // Combo calculation (Consecutive clears within 3 moves)
+            if (movesSinceLastClear <= 3) {
+                comboMultiplier++;
+                comboCont.classList.remove('opacity-0');
+                comboDisp.innerText = `x${comboMultiplier}`;
+                // Restart animation
+                comboDisp.classList.remove('combo-text');
+                void comboDisp.offsetWidth;
+                comboDisp.classList.add('combo-text');
+            } else {
+                comboMultiplier = 1;
+                comboCont.classList.add('opacity-0');
+            }
+            
+            movesSinceLastClear = 0;
+            
+            // Score calculation
+            let points = clearedCount * 100 * comboMultiplier;
+            if (clearedCount >= 2) points += 50 * clearedCount; // Multi-line bonus
+            addScore(points, true);
+            
+            spawnConfetti();
+
+        } else {
+            // No lines cleared
+            movesSinceLastClear++;
+            if (movesSinceLastClear > 3) {
+                comboMultiplier = 1;
+                comboCont.classList.add('opacity-0');
+            }
+        }
+        
+    }
+
+    function addScore(pts, isClear) {
+        score += pts;
+        scoreEl.innerText = score.toLocaleString();
+        
+        if (isClear) {
+            const fs = document.getElementById('floating-score');
+            fs.innerText = `+${pts}`;
+            fs.classList.remove('opacity-0');
+            fs.style.transform = `translateY(-50px) scale(1.5)`;
+            
+            setTimeout(() => {
+                fs.classList.add('opacity-0');
+                fs.style.transform = `translateY(0) scale(1)`;
+            }, 1000);
+        }
+    }
+
+    function checkGameOver() {
+        // Can ANY of the remaining shapes be placed ANYWHERE?
+        const canFit = currentShapes.some(sObj => {
+            if (sObj.used) return false;
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (canPlace(sObj.shape, r, c)) return true;
+                }
+            }
+            return false;
+        });
+
+        if (!canFit) {
+            // Game Over
+            localStorage.removeItem(SAVE_KEY); // Clear save on game over
+            setTimeout(() => {
+                document.getElementById('overlay-modal').classList.remove('hidden');
+                document.getElementById('overlay-modal').classList.add('flex');
+                document.getElementById('game-over-stats').classList.remove('hidden');
+                document.getElementById('final-score').innerText = score.toLocaleString();
+                
+                // Show name input only if decent score or just let them save anyway
+                document.getElementById('submit-score-btn').classList.remove('hidden');
+                document.getElementById('btn-continue').classList.add('hidden');
+                
+            }, 600);
+        }
+    }
+
+    function startGame() {
+        document.getElementById('overlay-modal').classList.add('hidden');
+        document.getElementById('overlay-modal').classList.remove('flex');
+        document.getElementById('game-over-stats').classList.add('hidden');
+        score = 0;
+        comboMultiplier = 1;
+        movesSinceLastClear = 0;
+        scoreEl.innerText = '0';
+        comboCont.classList.add('opacity-0');
+        initBoard();
+        generateShapes();
+        saveGameState();
+    }
+
+    function saveGameState() {
+        if(score === 0 && currentShapes.length === 0) return; // don't save empty states easily
+        const state = {
+            board: board,
+            score: score,
+            comboMultiplier: comboMultiplier,
+            movesSinceLastClear: movesSinceLastClear,
+            currentShapes: currentShapes
+        };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    }
+
+    function loadGame() {
+        const saved = localStorage.getItem(SAVE_KEY);
+        if(!saved) return startGame();
+        
+        try {
+            const state = JSON.parse(saved);
+            board = state.board;
+            score = state.score;
+            comboMultiplier = state.comboMultiplier;
+            movesSinceLastClear = state.movesSinceLastClear;
+            currentShapes = state.currentShapes;
+            
+            // Rebuild UI
+            document.getElementById('overlay-modal').classList.add('hidden');
+            document.getElementById('overlay-modal').classList.remove('flex');
+            
+            scoreEl.innerText = score.toLocaleString();
+            
+            if(comboMultiplier > 1) {
+                comboCont.classList.remove('opacity-0');
+                comboDisp.innerText = `x${comboMultiplier}`;
+            } else {
+                comboCont.classList.add('opacity-0');
+            }
+            
+            // Rebuild board DOM
+            boardEl.innerHTML = '';
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.id = `cell-${r}-${c}`;
+                    if(board[r][c] !== null) {
+                        cell.className = `cell filled`;
+                        cell.innerText = board[r][c];
+                    }
+                    boardEl.appendChild(cell);
+                }
+            }
+
+            // Rebuild shapes DOM
+            for (let i = 0; i < 3; i++) {
+                const slot = document.getElementById(`slot-${i}`);
+                slot.innerHTML = '';
+                if(currentShapes[i] && !currentShapes[i].used) {
+                    renderShapeInSlot(currentShapes[i], slot);
+                }
+            }
+
+        } catch(e) {
+            console.error("Save state parsing error", e);
+            startGame();
+        }
+    }
+
+    // Default init UI
+    function initMenu() {
+        if(localStorage.getItem(SAVE_KEY)) {
+            document.getElementById('btn-continue').classList.remove('hidden');
+        }
+        // Initialize an empty board behind the menu just for visuals
+        initBoard();
+    }
+
+    async function submitScore() {
+        const nameInput = document.getElementById('player-name').value.trim() || '名無し';
+        const btn = document.getElementById('submit-score-btn');
+        btn.innerText = '保存中...';
+        btn.disabled = true;
+
+        try {
+            await lbRef.push({
+                name: nameInput,
+                score: score,
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+            btn.innerText = '保存しました！';
+            setTimeout(() => {
+                showLeaderboard();
+            }, 1000);
+        } catch (e) {
+            console.error(e);
+            btn.innerText = 'エラー。もう一度やり直してください';
+            btn.disabled = false;
+        }
+    }
+
+    function showLeaderboard() {
+        const modal = document.getElementById('leaderboard-modal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        
+        const listEl = document.getElementById('leaderboard-list');
+        listEl.innerHTML = '<div class="text-center text-white/50 text-sm font-bold py-10">読み込み中...</div>';
+
+        lbRef.orderByChild('score').limitToLast(10).once('value', snap => {
+            const data = [];
+            snap.forEach(child => { data.push(child.val()); });
+            data.sort((a,b) => b.score - a.score);
+            
+            listEl.innerHTML = '';
+            if (data.length === 0) {
+                listEl.innerHTML = '<div class="text-center text-white/50 text-sm font-bold py-10">まだスコアがありません！</div>';
+                return;
+            }
+
+            data.forEach((entry, idx) => {
+                const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx+1}.`;
+                listEl.innerHTML += `
+                    <div class="flex justify-between items-center p-3 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition">
+                        <div class="flex items-center gap-3">
+                            <span class="w-6 text-center text-xl font-bold">${medal}</span>
+                            <span class="font-black tracking-wider uppercase">${entry.name}</span>
+                        </div>
+                        <span class="text-yellow-400 font-black">${entry.score.toLocaleString()}</span>
+                    </div>
+                `;
+            });
+        });
+    }
+
+    function closeLeaderboard(force = false) {
+        if (force || event.target.id === 'leaderboard-modal') {
+            document.getElementById('leaderboard-modal').classList.add('hidden');
+            document.getElementById('leaderboard-modal').classList.remove('flex');
+        }
+    }
+
+    function spawnConfetti() {
+        for (let i = 0; i < 20; i++) {
+            const conf = document.createElement('div');
+            conf.className = 'confetti';
+            conf.style.left = `${Math.random() * 100}vw`;
+            conf.style.backgroundColor = ['#f87171', '#60a5fa', '#34d399', '#facc15', '#c084fc'][Math.floor(Math.random() * 5)];
+            conf.style.top = '-10px';
+            document.body.appendChild(conf);
+            setTimeout(() => conf.remove(), 3000);
+        }
+    }
+
+    // Initialize Menu
+    initMenu();
+</script>
+
+</body>
+</html>
