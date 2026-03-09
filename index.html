@@ -327,6 +327,12 @@
     let dragClone = null;
     let dragOffset = { x: 0, y: 0 };
     let currentGhostCells = [];
+    
+    // Performance Optimization State
+    let dragReqFrame = null;
+    let cachedBoardRect = null;
+    let cachedCellW = null;
+    let lastDragPos = { x: 0, y: 0 };
 
     // Local Storage Key
     const SAVE_KEY = 'farmPuzzleSaveData';
@@ -428,9 +434,10 @@
         dragClone.classList.remove('dragging');
         
         // Match Board cell size for precise visual drop
-        const boardRect = boardEl.getBoundingClientRect();
+        cachedBoardRect = boardEl.getBoundingClientRect();
         // 10 cells, 9 gaps inside padding. Padding is 4px each side (8px). 9 gaps * 2px = 18px. Total non-cell width = 26px.
-        const bCellSize = (boardRect.width - 26) / 10; 
+        const bCellSize = (cachedBoardRect.width - 26) / 10; 
+        cachedCellW = bCellSize + 2; // bCellSize + cell gap
         
         const bounds = getShapeBounds(shapeObj.shape);
         const cloneW = bounds.cols * bCellSize + ((bounds.cols - 1) * 2); 
@@ -440,7 +447,11 @@
         dragClone.style.height = `${cloneH}px`;
         dragClone.style.transform = `scale(1.0)`; // Removed scaling so it matches true size
         dragClone.style.position = `absolute`;
+        dragClone.style.top = '0';
+        dragClone.style.left = '0';
+        dragClone.style.willChange = 'transform';
         dragClone.style.pointerEvents = 'none';
+        dragClone.style.transition = 'none'; // 追従の遅延を消すためにトランジションを無効化
         // Add shadow for lift effect instead of scale
         dragClone.style.filter = `drop-shadow(0px 10px 15px rgba(0,0,0,0.5))`;
 
@@ -462,10 +473,11 @@
         // Match drag exactly at center of touch pointer
         dragOffset.x = cloneW / 2;
         dragOffset.y = cloneH / 2;
+        lastDragPos = { x: touch.clientX, y: touch.clientY };
         
         dragLayer.appendChild(dragClone);
         
-        moveClone(touch.clientX, touch.clientY);
+        moveCloneRAF();
 
         document.addEventListener('touchmove', handleDragMove, {passive: false});
         document.addEventListener('touchend', handleDragEnd);
@@ -473,31 +485,36 @@
         document.addEventListener('mouseup', handleDragEnd);
     }
 
-    function moveClone(x, y) {
+    function moveCloneRAF() {
         if (!dragClone) return;
-        dragClone.style.left = `${x - dragOffset.x}px`;
-        dragClone.style.top = `${y - dragOffset.y}px`;
+        const x = lastDragPos.x - dragOffset.x;
+        const y = lastDragPos.y - dragOffset.y;
+        dragClone.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         
-        updateGhostCells(x, y);
+        updateGhostCells(lastDragPos.x, lastDragPos.y);
+        dragReqFrame = null;
     }
 
     function handleDragMove(e) {
         if(e.type === 'touchmove') e.preventDefault();
         const touch = e.type.includes('touch') ? e.touches[0] : e;
-        moveClone(touch.clientX, touch.clientY);
+        lastDragPos.x = touch.clientX;
+        lastDragPos.y = touch.clientY;
+        
+        if (!dragReqFrame) {
+            dragReqFrame = requestAnimationFrame(moveCloneRAF);
+        }
     }
 
     function getGridPos(clientX, clientY) {
-        const boardRect = boardEl.getBoundingClientRect();
+        if (!cachedBoardRect) return { r: -1, c: -1 };
         // Determine clone top-left
         const cloneX = clientX - dragOffset.x;
         const cloneY = clientY - dragOffset.y;
         
-        const cellW = (boardRect.width - 26) / 10 + 2; // cell + gap
-        
         // Add half cell width/height tolerance for snapping
-        const c = Math.round((cloneX - boardRect.left) / cellW);
-        const r = Math.round((cloneY - boardRect.top) / cellW);
+        const c = Math.round((cloneX - cachedBoardRect.left) / cachedCellW);
+        const r = Math.round((cloneY - cachedBoardRect.top) / cachedCellW);
         
         return {r, c};
     }
@@ -539,6 +556,11 @@
     }
 
     function handleDragEnd(e) {
+        if (dragReqFrame) {
+            cancelAnimationFrame(dragReqFrame);
+            dragReqFrame = null;
+        }
+
         document.removeEventListener('touchmove', handleDragMove);
         document.removeEventListener('touchend', handleDragEnd);
         document.removeEventListener('mousemove', handleDragMove);
