@@ -579,13 +579,20 @@
             slot.innerHTML = '';
             draggedData.used = true;
             
-            checkLinesAndCombo();
+            const willClear = checkLinesAndCombo();
 
             if (currentShapes.every(s => s.used)) {
                 generateShapes();
             }
             
-            checkGameOver();
+            // If lines will clear, wait for the animation to finish before checking game over
+            if (willClear) {
+                setTimeout(() => {
+                    checkGameOver();
+                }, 410); // slightly longer than the 400ms clear animation
+            } else {
+                checkGameOver();
+            }
         } else {
             // Snap back visually
             draggedData.element.classList.remove('dragging');
@@ -695,6 +702,7 @@
             addScore(points, true);
             
             spawnConfetti();
+            return true;
 
         } else {
             // No lines cleared
@@ -703,6 +711,7 @@
                 comboMultiplier = 1;
                 comboCont.classList.add('opacity-0');
             }
+            return false;
         }
         
     }
